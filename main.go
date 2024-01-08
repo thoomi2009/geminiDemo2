@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
@@ -34,6 +36,10 @@ func main() {
 	if apiKey == "" {
 		log.Fatal("Error genai api_key")
 	}
+
+	nuCPU := runtime.NumCPU()
+	runtime.GOMAXPROCS(nuCPU)
+	fmt.Printf("Running with %d CPUs\n", nuCPU)
 
 	e := echo.New()
 	e.Use(middleware.Logger())
