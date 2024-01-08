@@ -3,40 +3,48 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/caarlos0/env/v10"
-	"github.com/gin-gonic/gin"
 	"github.com/google/generative-ai-go/genai"
+	"github.com/joho/godotenv"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"google.golang.org/api/option"
 	"log"
 	"net/http"
+	"os"
 )
 
-type config struct {
-	ADDR   string `env:"ADDR" envDefault:":8088"`
-	ApiKey string `env:"API_KEY"`
+type Message struct {
+	Code    int32  `json:"code"`
+	Message string `json:"message"`
 }
 
 var (
-	cfg          config
+	defaultAddr  = ":8080"
+	addr         string
+	apiKey       string
 	genaiContent context.Context
 	genaiClient  *genai.Client
 	genaiErr     error
-	ginErr       error
 )
 
-type Talk struct {
-	Message string `form:"message"`
-}
-
 func main() {
-	cfg = config{}
-	if err := env.Parse(&cfg); err != nil {
-		fmt.Printf("%+v\n", err)
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+	addr = os.Getenv("ADDR")
+	if addr == "" {
+		addr = defaultAddr
+	}
+	apiKey = os.Getenv("API_KEY")
+	if apiKey == "" {
+		log.Fatal("Error genai api_key")
 	}
 
-	r := gin.Default()
+	log.Println(apiKey)
+
 	genaiContent = context.Background()
-	genaiClient, genaiErr = genai.NewClient(genaiContent, option.WithAPIKey(cfg.ApiKey))
+	genaiClient, genaiErr = genai.NewClient(genaiContent, option.WithAPIKey(apiKey))
 	if genaiErr != nil {
 		log.Fatal(genaiErr)
 	}
@@ -47,44 +55,50 @@ func main() {
 		}
 	}(genaiClient)
 
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"message": "pong",
+	e := echo.New()
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+
+	e.GET("/", hello)
+	e.GET("/ping", ping)
+	e.GET("/text", text)
+
+	e.Logger.Fatal(e.Start(addr))
+}
+
+func hello(c echo.Context) error {
+	return c.JSON(http.StatusOK, &Message{
+		Code:    200,
+		Message: "welcome",
+	})
+}
+
+func ping(c echo.Context) error {
+	return c.JSON(http.StatusOK, &Message{
+		Code:    200,
+		Message: "pong",
+	})
+}
+
+func text(c echo.Context) error {
+	text := c.FormValue("message")
+	if text == "" {
+		return c.JSON(http.StatusOK, &Message{
+			Code:    500,
+			Message: "欢迎使用AI CHAT,请输入内容",
 		})
-	})
-
-	r.GET("/text", func(c *gin.Context) {
-		var talk Talk
-		if c.ShouldBind(&talk) == nil {
-			fmt.Println(talk.Message)
-			message, err := chat(talk.Message)
-			if err != nil {
-				data := map[string]interface{}{
-					"code":    500,
-					"message": err.Error(),
-				}
-				c.AsciiJSON(http.StatusOK, data)
-			} else {
-				data := map[string]interface{}{
-					"code":    200,
-					"message": message,
-				}
-				c.AsciiJSON(http.StatusOK, data)
-			}
-		} else {
-			data := map[string]interface{}{
-				"code":    500,
-				"message": "欢迎使用AI CHAT",
-			}
-			c.AsciiJSON(http.StatusOK, data)
-			c.AsciiJSON(http.StatusOK, data)
-		}
-	})
-
-	ginErr = r.Run(cfg.ADDR)
-	if ginErr != nil {
-		fmt.Println(ginErr.Error())
-		return
+	}
+	message, err := chat(text)
+	if err != nil {
+		return c.JSON(http.StatusOK, &Message{
+			Code:    500,
+			Message: err.Error(),
+		})
+	} else {
+		return c.JSON(http.StatusOK, &Message{
+			Code:    200,
+			Message: message,
+		})
 	}
 }
 
@@ -94,7 +108,7 @@ func chat(text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var result string = ""
+	var result = ""
 	for _, candidate := range resp.Candidates {
 		if candidate.Content != nil {
 			for _, part := range candidate.Content.Parts {
